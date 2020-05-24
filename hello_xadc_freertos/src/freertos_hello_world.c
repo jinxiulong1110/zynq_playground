@@ -104,7 +104,8 @@
 
 #include "xadc_func.h"
 
-#define TIMER_ID	1
+#define TIMER_10s_ID	1
+#define TIMER_1s_ID	    2
 #define DELAY_10_SECONDS	10000UL
 #define DELAY_1_SECOND		1000UL
 #define TIMER_CHECK_THRESHOLD	9
@@ -113,15 +114,22 @@
 /* The Tx and Rx tasks as described at the top of this file. */
 static void prvTxTask( void *pvParameters );
 static void prvRxTask( void *pvParameters );
-static void vTimerCallback( TimerHandle_t pxTimer );
+static void Task_period_10s( void *pvParameters );
+
+
+static void vTimer_10s_Callback( TimerHandle_t pxTimer );
+static void vTimer_1s_Callback( TimerHandle_t pxTimer );
 /*-----------------------------------------------------------*/
 
 /* The queue used by the Tx and Rx tasks, as described at the top of this
 file. */
 static TaskHandle_t xTxTask;
 static TaskHandle_t xRxTask;
+static TaskHandle_t x10sTask;
+
 static QueueHandle_t xQueue = NULL;
-static TimerHandle_t xTimer = NULL;
+static TimerHandle_t xTimer_10s = NULL;
+static TimerHandle_t xTimer_1s = NULL;
 char HWstring[15] = "Hello World";
 long RxtaskCntr = 0;
 
@@ -131,6 +139,7 @@ int main( void )
 {
 	int Status;
 	const TickType_t x10seconds = pdMS_TO_TICKS( DELAY_10_SECONDS );
+	const TickType_t x1seconds = pdMS_TO_TICKS( DELAY_1_SECOND );
 
 	xil_printf( "Hello from Freertos example main\r\n" );
 
@@ -154,6 +163,15 @@ int main( void )
 				 tskIDLE_PRIORITY + 1,
 				 &xRxTask );
 
+	xTaskCreate( 	Task_period_10s, 					/* The function that implements the task. */
+						( const char * ) "10s Period Task", 		/* Text name for the task, provided to assist debugging only. */
+						configMINIMAL_STACK_SIZE, 	/* The stack allocated to the task. */
+						NULL, 						/* The task parameter is not used, so set to NULL. */
+						tskIDLE_PRIORITY+2,			/* The task runs at the idle priority. */
+						&x10sTask );
+
+
+
 	/* Create the queue used by the tasks.  The Rx task has a higher priority
 	than the Tx task, so will preempt the Tx task and remove values from the
 	queue as soon as the Tx task writes to the queue - therefore the queue can
@@ -170,18 +188,25 @@ int main( void )
 	 The tasks are deleted in the timer call back and a message is printed to convey that
 	 the example has run successfully.
 	 The timer expiry is set to 10 seconds and the timer set to not auto reload. */
-	xTimer = xTimerCreate( (const char *) "Timer",
+	xTimer_10s = xTimerCreate( (const char *) "Timer_10s",
 							x10seconds,
 							pdFALSE,
-							(void *) TIMER_ID,
-							vTimerCallback);
+							(void *) TIMER_10s_ID,
+							vTimer_10s_Callback);
+	xTimer_1s = xTimerCreate( (const char *) "Timer_1s",
+							x1seconds,
+							pdTRUE,
+							(void *) TIMER_1s_ID,
+							vTimer_1s_Callback);
 	/* Check the timer was created. */
-	configASSERT( xTimer );
+	configASSERT( xTimer_10s );
+	configASSERT( xTimer_1s );
 
 	/* start the timer with a block time of 0 ticks. This means as soon
 	   as the schedule starts the timer will start running and will expire after
 	   10 seconds */
-	xTimerStart( xTimer, 0 );
+	xTimerStart( xTimer_10s, 0 );
+	xTimerStart( xTimer_1s, 0 );
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
@@ -199,12 +224,13 @@ int main( void )
 static void prvTxTask( void *pvParameters )
 {
 	const TickType_t x1second = pdMS_TO_TICKS( DELAY_1_SECOND );
-	int Status;
+
 
 	for( ;; )
 	{
 		/* Delay for 1 second. */
 		vTaskDelay( x1second );
+
 
 		/* Send the next value on the queue.  The queue should always be
 		empty at this point so a block time of 0 is used. */
@@ -212,8 +238,6 @@ static void prvTxTask( void *pvParameters )
 					HWstring, /* The address of the data being sent. */
 					0UL );			/* The block time. */
 
-		Status = xadc_monitor_acq(&MonInfo);
-		if(Status != XST_SUCCESS) printf("XADC Monitor Acquisition  Failed\r\n");
 	}
 }
 
@@ -230,20 +254,46 @@ char Recdstring[15] = "";
 						portMAX_DELAY );	/* Wait without a timeout for data. */
 
 		/* Print the received data. */
+		//xil_printf( "Rx task received string from Tx task: %s\r\n", Recdstring );
+		RxtaskCntr++;
+	}
+}
+
+static void Task_period_10s( void *pvParameters )
+{
+	char Recdstring[15] = "";
+	int Status;
+
+	const TickType_t x10seconds = pdMS_TO_TICKS( DELAY_10_SECONDS );
+
+	for( ;; )
+	{
+		/* Delay for 10 seconds. */
+		vTaskDelay( x10seconds );
+
+		Status = xadc_monitor_acq(&MonInfo);
+		if(Status != XST_SUCCESS) printf("XADC Monitor Acquisition  Failed\r\n");
+
+		/* Block to wait for data arriving on the queue. */
+		xQueueReceive( 	xQueue,				/* The queue being read. */
+						Recdstring,	/* Data is read into this address. */
+						portMAX_DELAY );	/* Wait without a timeout for data. */
+
+		/* Print the received data. */
 		xil_printf( "Rx task received string from Tx task: %s\r\n", Recdstring );
 		RxtaskCntr++;
 	}
 }
 
 /*-----------------------------------------------------------*/
-static void vTimerCallback( TimerHandle_t pxTimer )
+static void vTimer_10s_Callback( TimerHandle_t pxTimer )
 {
 	long lTimerId;
 	configASSERT( pxTimer );
 
 	lTimerId = ( long ) pvTimerGetTimerID( pxTimer );
 
-	if (lTimerId != TIMER_ID) {
+	if (lTimerId != TIMER_10s_ID) {
 		xil_printf("FreeRTOS Hello World Example FAILED");
 	}
 
@@ -258,7 +308,28 @@ static void vTimerCallback( TimerHandle_t pxTimer )
 		xil_printf("FreeRTOS Hello World Example FAILED");
 	}
 
-	vTaskDelete( xRxTask );
-	vTaskDelete( xTxTask );
+	//vTaskDelete( xRxTask );
+	//vTaskDelete( xTxTask );
+}
+
+static void vTimer_1s_Callback( TimerHandle_t pxTimer )
+{
+	long lTimerId;
+	int Status;
+	configASSERT( pxTimer );
+
+	lTimerId = ( long ) pvTimerGetTimerID( pxTimer );
+
+	if (lTimerId != TIMER_1s_ID) {
+		xil_printf("FreeRTOS Hello World Example FAILED");
+	}
+	xTimerStop( xTimer_1s, 0 );
+	// record startup temperature and vccint on i2c
+	Status = xadc_monitor_acq(&MonInfo);
+	if(Status != XST_SUCCESS) printf("XADC Monitor Acquisition  Failed\r\n");
+	else printf("System Monitor Info in 1 sec after Startup\r\n");
+
+	//vTaskDelete( xRxTask );
+	//vTaskDelete( xTxTask );
 }
 
