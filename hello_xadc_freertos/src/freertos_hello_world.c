@@ -103,6 +103,7 @@
 #include "xparameters.h"
 
 #include "xadc_func.h"
+#include "i2c_func.h"
 
 #define TIMER_10s_ID	1
 #define TIMER_1s_ID	    2
@@ -145,6 +146,9 @@ int main( void )
 
 	Status = xadc_ini();
 	if(Status != XST_SUCCESS) printf("XADC initialization Failed\r\n");
+
+	Status = i2c_ini();
+	if(Status != XST_SUCCESS) printf("I2C initialization Failed\r\n");
 
 	/* Create the two tasks.  The Tx task is given a lower priority than the
 	Rx task, so the Rx task will leave the Blocked state and pre-empt the Tx
@@ -316,6 +320,8 @@ static void vTimer_1s_Callback( TimerHandle_t pxTimer )
 {
 	long lTimerId;
 	int Status;
+	u32 tmp_i2c_read_raw;
+	float tmp_i2c_read_data;
 	configASSERT( pxTimer );
 
 	lTimerId = ( long ) pvTimerGetTimerID( pxTimer );
@@ -328,6 +334,18 @@ static void vTimer_1s_Callback( TimerHandle_t pxTimer )
 	Status = xadc_monitor_acq(&MonInfo);
 	if(Status != XST_SUCCESS) printf("XADC Monitor Acquisition  Failed\r\n");
 	else printf("System Monitor Info in 1 sec after Startup\r\n");
+
+	Status = i2c_write_u32(&MonInfo.TempRawData.CurData, 0, 0);
+	if(Status != XST_SUCCESS) printf("SYS Monitor Info recorded in i2c Failed\r\n");
+	else printf("SYS Monitor Info recorded in i2c successfully\r\n");
+
+	Status = i2c_read_u32(&tmp_i2c_read_raw, 0, 0);
+	if(Status != XST_SUCCESS) printf("SYS Monitor Info read in i2c Failed\r\n");
+	else printf("SYS Monitor Info read in i2c successfully\r\n");
+
+	tmp_i2c_read_data = XAdcPs_RawToTemperature(tmp_i2c_read_raw);
+		printf("\r\nThe startup Temperature of last cycle is %0d.%03d Centigrades.\r\n",
+					(int)(tmp_i2c_read_data), XAdcFractionToInt(tmp_i2c_read_data));
 
 	//vTaskDelete( xRxTask );
 	//vTaskDelete( xTxTask );
