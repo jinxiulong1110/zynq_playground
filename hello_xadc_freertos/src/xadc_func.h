@@ -56,6 +56,7 @@ typedef struct {
 
 int xadc_ini(void);
 int xadc_monitor_acq(SysMon_Info_Acq *MonInfo);
+int XAdcFractionToInt(float FloatNum);
 
 
 #endif /* SRC_XADC_FUNC_H_ */

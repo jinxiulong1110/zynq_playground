@@ -25,7 +25,7 @@ static int XAdcSetupInterruptSystem(XScuGic *IntcInstancePtr,
 				      XAdcPs *XAdcPtr,
 				      u16 IntrId );
 static void XAdcInterruptHandler(void *CallBackRef);
-static int XAdcFractionToInt(float FloatNum);
+
 
 int xadc_ini()
 {
@@ -368,7 +368,7 @@ static void XAdcInterruptHandler(void *CallBackRef)
 * printf function and does not support the printing of floating point numbers.
 *
 *****************************************************************************/
-static int XAdcFractionToInt(float FloatNum)
+int XAdcFractionToInt(float FloatNum)
 {
 	float Temp;
 
