@@ -18,6 +18,12 @@
 #include "xil_printf.h"
 #include "xplatform_info.h"
 
+/* FreeRTOS includes. */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "timers.h"
+
 /************************** Constant Definitions *****************************/
 
 /*
@@ -60,10 +66,26 @@
  */
 typedef u16 AddressType;
 
+typedef struct {
+	u8 bTransmitCompl;
+	u8 bReceiveCompl;
+	u8 bSlaveResponse;
+	u16 totalErrCnt;
+} Q_i2c_trans;
+
+
+extern volatile u8 TransmitComplete;
+extern volatile u8 ReceiveComplete;
+
+extern TaskHandle_t xRxQI2CTask;
+extern QueueHandle_t xQueue_i2c_trans;
+
+extern XIicPs IicInstance;		/* The instance of the IIC device. */
 /************************** Function Prototypes ******************************/
 int i2c_ini_test(void);
 int i2c_ini(void);
 int i2c_write_u32(u32 *data, AddressType Address, char PageNr);
 int i2c_read_u32(u32 *data, AddressType Address, char PageNr);
+int I2CSetupInterruptSystem(XIicPs *IicPsPtr, u32 Int_Id);
 
 #endif /* SRC_I2C_FUNC_H_ */

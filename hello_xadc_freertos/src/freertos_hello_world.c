@@ -116,6 +116,7 @@
 /* The Tx and Rx tasks as described at the top of this file. */
 static void prvTxTask( void *pvParameters );
 static void prvRxTask( void *pvParameters );
+static void prvRxQI2CTask( void *pvParameters );
 static void Task_period_10s( void *pvParameters );
 
 
@@ -127,15 +128,26 @@ static void vTimer_1s_Callback( TimerHandle_t pxTimer );
 file. */
 static TaskHandle_t xTxTask;
 static TaskHandle_t xRxTask;
+
 static TaskHandle_t x10sTask;
 
-static QueueHandle_t xQueue = NULL;
+static QueueHandle_t xQueue_test = NULL;
+
 static TimerHandle_t xTimer_10s = NULL;
 static TimerHandle_t xTimer_1s = NULL;
 char HWstring[15] = "Hello World";
 long RxtaskCntr = 0;
+u8 i2c_rec_1s_stu=0;
 
 SysMon_Info_Acq MonInfo;
+Q_i2c_trans q_i2c_trans;
+
+u32 i2c_1s_stu_read_raw;
+
+u16 xTxTask_RunningCnt;
+u16 xRxTask_RunningCnt;
+u16 prvRxQI2CTask_RunningCnt;
+u16 Task_period_10s_RunningCnt;
 
 int main( void )
 {
@@ -146,13 +158,16 @@ int main( void )
 	xil_printf( "Hello from Freertos example main\r\n" );
 
 	Status = xadc_ini();
-	if(Status != XST_SUCCESS) printf("XADC initialization Failed\r\n");
+		if(Status != XST_SUCCESS) printf("XADC initialization Failed\r\n");
+		else printf("XADC initialization Successfully\r\n");
 
-	Status = i2c_ini();
-	if(Status != XST_SUCCESS) printf("I2C initialization Failed\r\n");
+		Status = i2c_ini();
+		if(Status != XST_SUCCESS) printf("I2C initialization Failed\r\n");
+		else printf("I2C initialization Successfully\r\n");
 
-	Status = uart0_ini();
-	if(Status != XST_SUCCESS) printf("UART0 initialization Failed\r\n");
+		Status = uart0_ini();
+		if(Status != XST_SUCCESS) printf("UART0 initialization Failed\r\n");
+		else printf("UART0 initialization Successfully\r\n");
 
 	/* Create the two tasks.  The Tx task is given a lower priority than the
 	Rx task, so the Rx task will leave the Blocked state and pre-empt the Tx
@@ -163,6 +178,7 @@ int main( void )
 					NULL, 						/* The task parameter is not used, so set to NULL. */
 					tskIDLE_PRIORITY,			/* The task runs at the idle priority. */
 					&xTxTask );
+	xil_printf( "prvTxTask Creat address: 0x%x\r\n", prvTxTask );
 
 	xTaskCreate( prvRxTask,
 				 ( const char * ) "GB",
@@ -170,6 +186,15 @@ int main( void )
 				 NULL,
 				 tskIDLE_PRIORITY + 1,
 				 &xRxTask );
+	xil_printf( "prvRxTask Creat address: 0x%x\r\n", prvRxTask );
+
+	xTaskCreate( prvRxQI2CTask,
+					 ( const char * ) "RxQi2c",
+					 configMINIMAL_STACK_SIZE,
+					 NULL,
+					 tskIDLE_PRIORITY,
+					 &xRxQI2CTask+3 );
+	xil_printf( "prvRxQI2CTask Creat address: 0x%x\r\n", prvRxQI2CTask );
 
 	xTaskCreate( 	Task_period_10s, 					/* The function that implements the task. */
 						( const char * ) "10s Period Task", 		/* Text name for the task, provided to assist debugging only. */
@@ -177,6 +202,7 @@ int main( void )
 						NULL, 						/* The task parameter is not used, so set to NULL. */
 						tskIDLE_PRIORITY+2,			/* The task runs at the idle priority. */
 						&x10sTask );
+	xil_printf( "Task_period_10s Creat address: 0x%x\r\n", Task_period_10s );
 
 
 
@@ -184,11 +210,17 @@ int main( void )
 	than the Tx task, so will preempt the Tx task and remove values from the
 	queue as soon as the Tx task writes to the queue - therefore the queue can
 	never have more than one item in it. */
-	xQueue = xQueueCreate( 	1,						/* There is only one space in the queue. */
+	xQueue_test = xQueueCreate( 	1,						/* There is only one space in the queue. */
 							sizeof( HWstring ) );	/* Each space in the queue is large enough to hold a uint32_t. */
 
+	xQueue_i2c_trans = xQueueCreate( 	10,						/* There is only one space in the queue. */
+							sizeof( Q_i2c_trans ) );
+
 	/* Check the queue was created. */
-	configASSERT( xQueue );
+	configASSERT( xQueue_test );
+	configASSERT( xQueue_i2c_trans );
+
+
 
 	/* Create a timer with a timer expiry of 10 seconds. The timer would expire
 	 after 10 seconds and the timer call back would get called. In the timer call back
@@ -219,6 +251,8 @@ int main( void )
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
 
+
+
 	/* If all is well, the scheduler will now be running, and the following line
 	will never be reached.  If the following line does execute, then there was
 	insufficient FreeRTOS heap memory available for the idle and/or timer tasks
@@ -233,7 +267,6 @@ static void prvTxTask( void *pvParameters )
 {
 	const TickType_t x1second = pdMS_TO_TICKS( DELAY_1_SECOND );
 
-
 	for( ;; )
 	{
 		/* Delay for 1 second. */
@@ -242,9 +275,11 @@ static void prvTxTask( void *pvParameters )
 
 		/* Send the next value on the queue.  The queue should always be
 		empty at this point so a block time of 0 is used. */
-		xQueueSend( xQueue,			/* The queue being written to. */
+		xQueueSend( xQueue_test,			/* The queue being written to. */
 					HWstring, /* The address of the data being sent. */
 					0UL );			/* The block time. */
+
+		xil_printf( "xTxTask_RunningCnt = %d\r\n" , xTxTask_RunningCnt++);
 
 	}
 }
@@ -252,26 +287,77 @@ static void prvTxTask( void *pvParameters )
 /*-----------------------------------------------------------*/
 static void prvRxTask( void *pvParameters )
 {
-char Recdstring[15] = "";
+
+	char Recdstring[15] = "";
+
 
 	for( ;; )
 	{
 		/* Block to wait for data arriving on the queue. */
-		xQueueReceive( 	xQueue,				/* The queue being read. */
-						Recdstring,	/* Data is read into this address. */
+		xQueueReceive( 	xQueue_test,				/* The queue being read. */
+				Recdstring,	/* Data is read into this address. */
 						portMAX_DELAY );	/* Wait without a timeout for data. */
 
 		/* Print the received data. */
-		//xil_printf( "Rx task received string from Tx task: %s\r\n", Recdstring );
+		xil_printf( "Rx task received string from Tx task: %s\r\n", Recdstring );
 		RxtaskCntr++;
+
+		xil_printf( "xRxTask_RunningCnt = %d\r\n" , xRxTask_RunningCnt++);
+	}
+}
+
+static void prvRxQI2CTask( void *pvParameters )
+{
+	int Status;
+	Q_i2c_trans tmpQ_i2c_trans;
+	float tmp_i2c_read_data;
+
+	tmpQ_i2c_trans.bReceiveCompl = 0;
+	tmpQ_i2c_trans.bSlaveResponse = 0;
+	tmpQ_i2c_trans.bTransmitCompl = 0;
+	tmpQ_i2c_trans.totalErrCnt = 0;
+
+	for( ;; )
+	{
+		/* Block to wait for data arriving on the queue. */
+				xQueueReceive( 	xQueue_i2c_trans,				/* The queue being read. */
+								&tmpQ_i2c_trans,	/* Data is read into this address. */
+								portMAX_DELAY );	/* Wait without a timeout for data. */
+
+				xil_printf( "Q_i2c_trans  bReceiveCompl: %d\r\n", tmpQ_i2c_trans.bReceiveCompl );
+				xil_printf( "Q_i2c_trans  bSlaveResponse: %d\r\n", tmpQ_i2c_trans.bSlaveResponse );
+				xil_printf( "Q_i2c_trans  bTransmitCompl: %d\r\n", tmpQ_i2c_trans.bTransmitCompl );
+				xil_printf( "Q_i2c_trans  totalErrCnt: %d\r\n", tmpQ_i2c_trans.totalErrCnt );
+
+
+				if(tmpQ_i2c_trans.bTransmitCompl){
+					TransmitComplete = 0;
+					xil_printf( "I2C transmit completed\r\n");
+
+					if(i2c_rec_1s_stu){
+						i2c_rec_1s_stu = 0;
+						Status = i2c_read_u32(&i2c_1s_stu_read_raw, 0, 0);
+						if(Status != XST_SUCCESS) printf("SYS Monitor Info read in i2c Failed\r\n");
+						else printf("SYS Monitor Info read in i2c successfully\r\n");
+					}
+
+				}
+
+				if(tmpQ_i2c_trans.bReceiveCompl){
+					ReceiveComplete = 0;
+					tmp_i2c_read_data = XAdcPs_RawToTemperature(i2c_1s_stu_read_raw);
+					printf("\r\nThe startup Temperature of last cycle is %0d.%03d Centigrades.\r\n",
+							(int)(tmp_i2c_read_data), XAdcFractionToInt(tmp_i2c_read_data));
+				}
+
+				xil_printf( "prvRxQI2CTask_RunningCnt = %d\r\n" , prvRxQI2CTask_RunningCnt++);
 	}
 }
 
 static void Task_period_10s( void *pvParameters )
 {
-	char Recdstring[15] = "";
-	int Status;
 
+	int Status;
 	const TickType_t x10seconds = pdMS_TO_TICKS( DELAY_10_SECONDS );
 
 	for( ;; )
@@ -282,16 +368,9 @@ static void Task_period_10s( void *pvParameters )
 		Status = xadc_monitor_acq(&MonInfo);
 		if(Status != XST_SUCCESS) printf("XADC Monitor Acquisition  Failed\r\n");
 
-		Status = i2c_write_u32(&MonInfo.TempRawData.CurData, 0, 0);
+		xil_printf( "Task_period_10s_RunningCnt = %d\r\n" , Task_period_10s_RunningCnt++);
 
-		/* Block to wait for data arriving on the queue. */
-		xQueueReceive( 	xQueue,				/* The queue being read. */
-						Recdstring,	/* Data is read into this address. */
-						portMAX_DELAY );	/* Wait without a timeout for data. */
 
-		/* Print the received data. */
-		xil_printf( "Rx task received string from Tx task: %s\r\n", Recdstring );
-		RxtaskCntr++;
 	}
 }
 
@@ -326,8 +405,9 @@ static void vTimer_1s_Callback( TimerHandle_t pxTimer )
 {
 	long lTimerId;
 	int Status;
-	u32 tmp_i2c_read_raw;
-	float tmp_i2c_read_data;
+
+	(void)I2CSetupInterruptSystem(&IicInstance, XPAR_XIICPS_1_INTR);
+
 	configASSERT( pxTimer );
 
 	lTimerId = ( long ) pvTimerGetTimerID( pxTimer );
@@ -337,6 +417,8 @@ static void vTimer_1s_Callback( TimerHandle_t pxTimer )
 	}
 	xTimerStop( xTimer_1s, 0 );
 	// record startup temperature and vccint on i2c
+	i2c_rec_1s_stu = 1;
+
 	Status = xadc_monitor_acq(&MonInfo);
 	if(Status != XST_SUCCESS) printf("XADC Monitor Acquisition  Failed\r\n");
 	else printf("System Monitor Info in 1 sec after Startup\r\n");
@@ -344,14 +426,6 @@ static void vTimer_1s_Callback( TimerHandle_t pxTimer )
 	Status = i2c_write_u32(&MonInfo.TempRawData.CurData, 0, 0);
 	if(Status != XST_SUCCESS) printf("SYS Monitor Info recorded in i2c Failed\r\n");
 	else printf("SYS Monitor Info recorded in i2c successfully\r\n");
-
-	Status = i2c_read_u32(&tmp_i2c_read_raw, 0, 0);
-	if(Status != XST_SUCCESS) printf("SYS Monitor Info read in i2c Failed\r\n");
-	else printf("SYS Monitor Info read in i2c successfully\r\n");
-
-	tmp_i2c_read_data = XAdcPs_RawToTemperature(tmp_i2c_read_raw);
-		printf("\r\nThe startup Temperature of last cycle is %0d.%03d Centigrades.\r\n",
-					(int)(tmp_i2c_read_data), XAdcFractionToInt(tmp_i2c_read_data));
 
 	//vTaskDelete( xRxTask );
 	//vTaskDelete( xTxTask );
